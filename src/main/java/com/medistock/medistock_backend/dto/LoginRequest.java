@@ -1,4 +1,4 @@
-package com.medistock.medistock_backend.dto.request;
+package com.medistock.medistock_backend.dto;
 
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
