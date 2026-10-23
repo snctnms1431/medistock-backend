@@ -10,7 +10,6 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.stream.Collectors;
-
 @RestController
 @RequestMapping("/api/admin")
 @RequiredArgsConstructor
@@ -18,9 +17,9 @@ public class AdminController {
 
     private final UserRepository userRepository;
 
-    // 1. Get All Users (Only accessible by ADMIN)
+    // Changed to allow both ADMIN and ROLE_ADMIN
     @GetMapping("/users")
-    @PreAuthorize("hasAnyAuthority('ROLE_ADMIN', 'ADMIN')")
+    @PreAuthorize("hasAnyAuthority('ADMIN', 'ROLE_ADMIN')")
     public ResponseEntity<List<AuthResponse.UserDto>> getAllUsers() {
         List<AuthResponse.UserDto> users = userRepository.findAll()
                 .stream()
@@ -29,9 +28,9 @@ public class AdminController {
         return ResponseEntity.ok(users);
     }
 
-    // 2. Toggle User Status (Enable/Disable) (Only accessible by ADMIN)
+    // Changed to allow both ADMIN and ROLE_ADMIN
     @PutMapping("/users/{id}/toggle-status")
-    @PreAuthorize("hasAnyAuthority('ROLE_ADMIN', 'ADMIN')")
+    @PreAuthorize("hasAnyAuthority('ADMIN', 'ROLE_ADMIN')")
     public ResponseEntity<String> toggleUserStatus(@PathVariable Long id) {
         User user = userRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("User not found"));
