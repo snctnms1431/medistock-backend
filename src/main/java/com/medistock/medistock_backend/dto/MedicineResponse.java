@@ -1,4 +1,5 @@
 package com.medistock.medistock_backend.dto;
+
 import com.medistock.medistock_backend.entity.Medicine;
 import lombok.Data;
 import java.time.LocalDate;
@@ -17,8 +18,13 @@ public class MedicineResponse {
     private LocalDate manufacturingDate;
     private LocalDate expiryDate;
     private Double unitPrice;
-    private String status; // Calculated: IN_STOCK, LOW_STOCK, OUT_OF_STOCK, EXPIRED, EXPIRING_SOON
+    private String status;
     private LocalDateTime updatedAt;
+
+    // ADD THESE MISSING FIELDS:
+    private String genericName = "Generic formulation";
+    private String storageCondition = "Room Temperature";
+    private String unit = "units";
 
     public static MedicineResponse fromEntity(Medicine m) {
         MedicineResponse dto = new MedicineResponse();
@@ -37,7 +43,7 @@ public class MedicineResponse {
         dto.setUnitPrice(m.getUnitPrice());
         dto.setUpdatedAt(m.getUpdatedAt());
 
-        // Calculate status dynamically (Same logic as your frontend!)
+        // Status calculation
         LocalDate today = LocalDate.now();
         if (m.getExpiryDate() != null && m.getExpiryDate().isBefore(today)) {
             dto.setStatus("EXPIRED");
