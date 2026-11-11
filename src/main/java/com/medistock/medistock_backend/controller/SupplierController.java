@@ -7,6 +7,8 @@ import com.medistock.medistock_backend.entity.User;
 import com.medistock.medistock_backend.repository.RoleRepository;
 import com.medistock.medistock_backend.repository.SupplierRepository;
 import com.medistock.medistock_backend.repository.UserRepository;
+import com.medistock.medistock_backend.service.AuditService;
+import com.medistock.medistock_backend.service.EmailService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -27,18 +29,18 @@ public class SupplierController {
     private final UserRepository userRepository;
     private final RoleRepository roleRepository;
     private final PasswordEncoder passwordEncoder;
+    private final AuditService auditService;
+    private final EmailService emailService;
 
     @GetMapping
     public ResponseEntity<List<Supplier>> getAllSuppliers() {
         return ResponseEntity.ok(supplierRepository.findAll());
     }
 
-    // Create supplier + their login account
     @PostMapping
     @PreAuthorize("hasAnyAuthority('ROLE_ADMIN', 'ADMIN')")
     public ResponseEntity<?> addSupplier(@RequestBody SupplierRequest request) {
         try {
-            // 1. Validate email is unique
             if (userRepository.existsByEmail(request.getEmail())) {
                 return ResponseEntity.badRequest()
                         .body(Map.of("message", "A user with this email already exists"));
@@ -48,7 +50,6 @@ public class SupplierController {
                         .body(Map.of("message", "Password must be at least 6 characters"));
             }
 
-            // 2. Create Supplier profile
             Supplier supplier = new Supplier();
             supplier.setName(request.getName());
             supplier.setContactPerson(request.getContactPerson());
@@ -61,7 +62,6 @@ public class SupplierController {
             supplier.setStatus("Active");
             supplierRepository.save(supplier);
 
-            // 3. Create User login account with SUPPLIER role
             User user = new User();
             user.setFullName(
                     request.getContactPerson() != null && !request.getContactPerson().isBlank()
@@ -77,6 +77,18 @@ public class SupplierController {
                     .orElseThrow(() -> new RuntimeException("SUPPLIER role missing from DB"));
             user.setRoles(Collections.singleton(supplierRole));
             userRepository.save(user);
+
+            auditService.log("CREATE_SUPPLIER", "SUPPLIER", supplier.getId(),
+                    "Registered " + supplier.getName() + " (" + supplier.getEmail() + ")");
+
+            // Send welcome email with login credentials (fire-and-forget)
+            emailService.sendSupplierWelcomeEmail(
+                    request.getEmail(),
+                    supplier.getName(),
+                    request.getContactPerson(),
+                    request.getPassword() // raw password — only used here, never stored
+            );
+
 
             return ResponseEntity.ok(Map.of(
                     "message", "Supplier and login account created successfully",
@@ -106,6 +118,9 @@ public class SupplierController {
             existing.setRating(updated.getRating());
 
             supplierRepository.save(existing);
+
+            auditService.log("UPDATE_SUPPLIER", "SUPPLIER", id, "Updated " + existing.getName());
+
             return ResponseEntity.ok(Map.of("message", "Supplier updated"));
         } catch (Exception e) {
             return ResponseEntity.status(500).body(Map.of("message", "Error: " + e.getMessage()));
@@ -117,11 +132,16 @@ public class SupplierController {
     public ResponseEntity<?> deleteSupplier(@PathVariable Long id) {
         try {
             Supplier supplier = supplierRepository.findById(id).orElse(null);
+            String name = supplier != null ? supplier.getName() : ("ID " + id);
+
             if (supplier != null && supplier.getEmail() != null) {
                 userRepository.findByEmail(supplier.getEmail())
                         .ifPresent(userRepository::delete);
             }
             supplierRepository.deleteById(id);
+
+            auditService.log("DELETE_SUPPLIER", "SUPPLIER", id, "Deleted " + name);
+
             return ResponseEntity.ok(Map.of("message", "Supplier and login account deleted"));
         } catch (Exception e) {
             return ResponseEntity.status(500).body(Map.of(

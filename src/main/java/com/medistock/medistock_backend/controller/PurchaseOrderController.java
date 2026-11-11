@@ -8,10 +8,12 @@ import com.medistock.medistock_backend.entity.Supplier;
 import com.medistock.medistock_backend.repository.MedicineRepository;
 import com.medistock.medistock_backend.repository.PurchaseOrderRepository;
 import com.medistock.medistock_backend.repository.SupplierRepository;
+import com.medistock.medistock_backend.service.AuditService;
+import com.medistock.medistock_backend.service.EmailService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.security.core.Authentication; // ✅ CORRECT IMPORT
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.ArrayList;
@@ -29,16 +31,17 @@ public class PurchaseOrderController {
     private final PurchaseOrderRepository orderRepo;
     private final SupplierRepository supplierRepo;
     private final MedicineRepository medicineRepo;
+    private final AuditService auditService;
+    private final EmailService emailService;
 
     @GetMapping
     public ResponseEntity<List<Map<String, Object>>> getAllOrders() {
         return ResponseEntity.ok(mapOrdersToResponse(orderRepo.findAll()));
     }
 
-    // ONLY PHARMACIST CAN CREATE AN ORDER
     @PostMapping
     @PreAuthorize("hasAnyAuthority('ROLE_PHARMACIST', 'PHARMACIST')")
-    public ResponseEntity<?> createOrder(@RequestBody PurchaseOrderRequest request) {
+    public ResponseEntity<?> createOrder(@RequestBody PurchaseOrderRequest request, Authentication auth) {
         try {
             Supplier supplier = supplierRepo.findById(request.getSupplierId())
                     .orElseThrow(() -> new RuntimeException("Supplier not found"));
@@ -46,7 +49,7 @@ public class PurchaseOrderController {
             PurchaseOrder order = new PurchaseOrder();
             order.setOrderNumber("PO-" + (2026 + new java.util.Random().nextInt(10)) + "-" + (1000 + new java.util.Random().nextInt(9000)));
             order.setSupplier(supplier);
-            order.setStatus("PENDING"); // Starts as pending for Admin approval
+            order.setStatus("PENDING");
 
             List<PurchaseOrderItem> items = new ArrayList<>();
             double total = 0.0;
@@ -68,26 +71,77 @@ public class PurchaseOrderController {
             order.setItems(items);
             order.setTotalAmount(total);
             orderRepo.save(order);
+
+            // ===== EMAIL TRIGGER: Notify Admin of new PO =====
+            try {
+                int itemCount = order.getItems() != null ? order.getItems().size() : 0;
+                String requester = auth.getName();
+                System.out.println("📧 Triggering admin alert for PO " + order.getOrderNumber() + " (requester: " + requester + ")");
+                emailService.sendNewPoAdminAlert(
+                        order.getOrderNumber(),
+                        requester,
+                        supplier.getName(),
+                        String.format("%.2f", order.getTotalAmount()),
+                        itemCount
+                );
+            } catch (Exception emailEx) {
+                System.err.println("⚠️ Admin PO alert email failed (non-blocking): " + emailEx.getMessage());
+            }
+
+            auditService.log("CREATE_PURCHASE_ORDER", "PURCHASE_ORDER", order.getId(),
+                    "Created " + order.getOrderNumber() + " for " + supplier.getName() + " (₹" + total + ")");
+
             return ResponseEntity.ok(Map.of("message", "Order created successfully"));
         } catch (Exception e) {
+            e.printStackTrace();
             return ResponseEntity.status(500).body(Map.of("error", e.getMessage()));
         }
     }
 
-    // ADMIN AND SUPPLIER CAN UPDATE STATUS
     @PutMapping("/{id}/status")
     @PreAuthorize("hasAnyAuthority('ADMIN', 'ROLE_ADMIN', 'ROLE_PHARMACIST', 'PHARMACIST', 'SUPPLIER', 'ROLE_SUPPLIER')")
     public ResponseEntity<?> updateStatus(@PathVariable Long id, @RequestParam String status) {
         PurchaseOrder order = orderRepo.findById(id).orElseThrow();
+        String oldStatus = order.getStatus();
         order.setStatus(status.toUpperCase());
         orderRepo.save(order);
+
+        // ===== EMAIL TRIGGER: Notify Supplier when PO is APPROVED =====
+        if ("APPROVED".equalsIgnoreCase(status)) {
+            try {
+                Supplier supplier = order.getSupplier();
+                if (supplier != null && supplier.getEmail() != null && !supplier.getEmail().isBlank()) {
+                    int itemCount = order.getItems() != null ? order.getItems().size() : 0;
+                    System.out.println("📧 Triggering PO approved email to " + supplier.getEmail());
+                    emailService.sendPoApprovedEmail(
+                            supplier.getEmail(),
+                            supplier.getName(),
+                            order.getOrderNumber(),
+                            String.format("%.2f", order.getTotalAmount()),
+                            itemCount
+                    );
+                } else {
+                    System.out.println("⚠️ Skipping PO approved email — supplier has no email address");
+                }
+            } catch (Exception emailEx) {
+                System.err.println("⚠️ PO approved email failed (non-blocking): " + emailEx.getMessage());
+            }
+        }
+
+        auditService.log("UPDATE_PO_STATUS", "PURCHASE_ORDER", id,
+                order.getOrderNumber() + ": " + oldStatus + " → " + status.toUpperCase());
+
         return ResponseEntity.ok(Map.of("message", "Status updated"));
     }
 
-    // ONLY ADMIN CAN DELETE ORDERS
     @DeleteMapping("/{id}")
     @PreAuthorize("hasAnyAuthority('ADMIN', 'ROLE_ADMIN')")
     public ResponseEntity<?> deleteOrder(@PathVariable Long id) {
+        PurchaseOrder order = orderRepo.findById(id).orElse(null);
+        String orderNum = order != null ? order.getOrderNumber() : ("ID " + id);
+
+        auditService.log("DELETE_PURCHASE_ORDER", "PURCHASE_ORDER", id, "Deleted order " + orderNum);
+
         orderRepo.deleteById(id);
         return ResponseEntity.ok(Map.of("message", "Order deleted"));
     }
@@ -115,43 +169,30 @@ public class PurchaseOrderController {
         }).collect(Collectors.toList());
     }
 
-    // --- SUPPLIER ENDPOINTS ---
-
-    // Get ALL orders for the logged-in supplier
     @GetMapping("/supplier")
     @PreAuthorize("hasAnyAuthority('SUPPLIER', 'ROLE_SUPPLIER')")
     public ResponseEntity<List<Map<String, Object>>> getSupplierOrders(Authentication authentication) {
-        List<PurchaseOrder> myOrders = getMyOrders(authentication);
-        return ResponseEntity.ok(mapOrdersToResponse(myOrders));
+        return ResponseEntity.ok(mapOrdersToResponse(getMyOrders(authentication)));
     }
 
-    // Get only active deliveries (APPROVED or PENDING) for the logged-in supplier
     @GetMapping("/supplier/deliveries")
     @PreAuthorize("hasAnyAuthority('SUPPLIER', 'ROLE_SUPPLIER')")
     public ResponseEntity<List<Map<String, Object>>> getSupplierDeliveries(Authentication authentication) {
-        List<PurchaseOrder> orders = getMyOrders(authentication);
-
-        List<PurchaseOrder> active = orders.stream()
+        List<PurchaseOrder> active = getMyOrders(authentication).stream()
                 .filter(o -> o.getStatus().equals("APPROVED") || o.getStatus().equals("PENDING"))
                 .collect(Collectors.toList());
-
         return ResponseEntity.ok(mapOrdersToResponse(active));
     }
 
-    // Get order history (RECEIVED or REJECTED) for the logged-in supplier
     @GetMapping("/supplier/history")
     @PreAuthorize("hasAnyAuthority('SUPPLIER', 'ROLE_SUPPLIER')")
     public ResponseEntity<List<Map<String, Object>>> getSupplierHistory(Authentication authentication) {
-        List<PurchaseOrder> orders = getMyOrders(authentication);
-
-        List<PurchaseOrder> history = orders.stream()
+        List<PurchaseOrder> history = getMyOrders(authentication).stream()
                 .filter(o -> o.getStatus().equals("RECEIVED") || o.getStatus().equals("REJECTED"))
                 .collect(Collectors.toList());
-
         return ResponseEntity.ok(mapOrdersToResponse(history));
     }
 
-    // Helper to fetch all orders belonging to the current supplier
     private List<PurchaseOrder> getMyOrders(Authentication authentication) {
         String email = authentication.getName();
         Supplier supplier = supplierRepo.findAll().stream()
@@ -164,7 +205,6 @@ public class PurchaseOrderController {
                 .collect(Collectors.toList());
     }
 
-    // STAFF can see approved orders (deliveries in transit)
     @GetMapping("/staff/deliveries")
     @PreAuthorize("hasAnyAuthority('STAFF', 'ROLE_STAFF')")
     public ResponseEntity<List<Map<String, Object>>> getStaffDeliveries() {

@@ -99,7 +99,7 @@ public class AdminController {
         }
         // Optional: Prevent admin from deleting themselves
         User user = userRepository.findById(id).get();
-        if (user.getEmail().equals("admin@medistock.com")) {
+        if (user.getEmail().equals("sanchitnimse145@gmail.com")) {
             throw new RuntimeException("Cannot delete the main admin account");
         }
 
