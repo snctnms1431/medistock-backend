@@ -4,6 +4,7 @@
       <env name="DB_USERNAME" value="medistock_user" />
       <env name="DB_PASSWORD" value="Snct@1431" />
       <env name="JWT_SECRET" value="nW6qdkVboaa7xXLH+gzARM/UB0T5BUho5ouQP/2+66SUCKa81/GAxScXZNsgZzN3" />
+      <env name="MAIL_PASSWORD" value="zlls legx oxln qems" />
     </envs>
     <option name="MAIN_CLASS_NAME" value="com.medistock.medistock_backend.MedistockBackendApplication" />
     <module name="medistock-backend" />
