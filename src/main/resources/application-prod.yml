@@ -1,13 +1,36 @@
+
 spring:
   datasource:
-    url: ${PROD_DB_URL}
-    username: ${PROD_DB_USERNAME}
-    password: ${PROD_DB_PASSWORD}
+    url: ${SPRING_DATASOURCE_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    driver-class-name: com.mysql.cj.jdbc.Driver
 
   jpa:
     hibernate:
       ddl-auto: validate
     show-sql: false
+
+  jackson:
+    default-property-inclusion: non_null
+
+  mail:
+    host: smtp.gmail.com
+    port: 587
+    username: jobconnectteam31@gmail.com
+    password: ${MAIL_PASSWORD}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+          connectiontimeout: 5000
+          timeout: 5000
+          writetimeout: 5000
+
+server:
+  port: ${PORT:8080}
 
 app:
   jwt:
@@ -15,7 +38,17 @@ app:
     expiration-ms: 900000
     issuer: medistock
 
+  email:
+    enabled: true
+    from-address: jobconnectteam31@gmail.com
+    from-name: MediStock Notifications
+    admin-email: sanchitnimse145@gmail.com
+
 logging:
   level:
     root: INFO
     com.medistock: INFO
+
+backup:
+  directory: ./backups
+  max-backups: 10
